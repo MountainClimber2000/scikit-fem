@@ -1,18 +1,13 @@
 from dataclasses import dataclass, replace, field
 from typing import Type
-
 import numpy as np
 from numpy import ndarray
-
 from ..element import Element, ElementTriP1
 from .mesh_2d import Mesh2D
 from .mesh_simplex import MeshSimplex
-
-
 @dataclass(repr=False)
 class MeshTri1(MeshSimplex, Mesh2D):
     """A standard first-order triangular mesh."""
-
     doflocs: ndarray = field(
         default_factory=lambda: np.array(
             [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64
@@ -26,8 +21,8 @@ class MeshTri1(MeshSimplex, Mesh2D):
     elem: Type[Element] = ElementTriP1
     affine: bool = True
     sort_t: bool = True
-
     @classmethod
+
     def init_tensor(cls: Type, x: ndarray, y: ndarray):
         r"""Initialize a tensor product mesh.
 
@@ -81,9 +76,7 @@ class MeshTri1(MeshSimplex, Mesh2D):
     @classmethod
     def init_symmetric(cls: Type) -> Mesh2D:
         r"""Initialize a symmetric mesh of the unit square.
-
         The mesh topology is as follows::
-
             *------------*
             |\          /|
             |  \      /  |
@@ -93,7 +86,6 @@ class MeshTri1(MeshSimplex, Mesh2D):
             |  /      \  |
             |/          \|
             O------------*
-
         """
         p = np.array([[0., 1., 1., 0., .5],
                       [0., 0., 1., 1., .5]], dtype=np.float64)
@@ -102,13 +94,10 @@ class MeshTri1(MeshSimplex, Mesh2D):
                       [2, 3, 4],
                       [0, 3, 4]], dtype=np.int32).T
         return cls(p, t)
-
     @classmethod
     def init_sqsymmetric(cls: Type) -> Mesh2D:
         r"""Initialize a symmetric mesh of the unit square.
-
         The mesh topology is as follows::
-
             *------*------*
             |\     |     /|
             |  \   |   /  |
@@ -118,7 +107,6 @@ class MeshTri1(MeshSimplex, Mesh2D):
             |  /   |   \  |
             |/     |     \|
             O------*------*
-
         """
         p = np.array([[0., .5, 1., 0., .5, 1., 0., .5, 1.],
                       [0., 0., 0., .5, .5, .5, 1., 1., 1.]], dtype=np.float64)
@@ -131,13 +119,10 @@ class MeshTri1(MeshSimplex, Mesh2D):
                       [4, 7, 8],
                       [4, 5, 8]], dtype=np.int32).T
         return cls(p, t)
-
     @classmethod
     def init_lshaped(cls: Type) -> Mesh2D:
         r"""Initialize a mesh for the L-shaped domain.
-
         The mesh topology is as follows::
-
             *-------*
             | \     |
             |   \   |
@@ -147,7 +132,6 @@ class MeshTri1(MeshSimplex, Mesh2D):
             |   /   |   \   |
             | /     |     \ |
             *---------------*
-
         """
         p = np.array([[0., 1., 0., -1.,  0., -1., -1.,  1.],
                       [0., 0., 1.,  0., -1., -1.,  1., -1.]], dtype=np.float64)
@@ -158,16 +142,13 @@ class MeshTri1(MeshSimplex, Mesh2D):
                       [0, 4, 5],
                       [0, 3, 5]], dtype=np.int32).T
         return cls(p, t)
-
     @classmethod
     def init_circle(cls: Type,
                     nrefs: int = 3,
                     smoothed: bool = False) -> Mesh2D:
         r"""Initialize a circle mesh.
-
         Works by repeatedly refining the following mesh and moving
         new nodes to the boundary::
-
                    *
                  / | \
                /   |   \
@@ -177,14 +158,12 @@ class MeshTri1(MeshSimplex, Mesh2D):
                \   |   /
                  \ | /
                    *
-
         Parameters
         ----------
         nrefs
             Number of refinements, by default 3.
         smoothed
             If ``True``, apply smoothing after each refine.
-
         """
         p = np.array([[0., 0.],
                       [1., 0.],
@@ -292,82 +271,148 @@ class MeshTri1(MeshSimplex, Mesh2D):
     @staticmethod
     def _adaptive_split_elements(m, facets, subdomains):
         """Define new elements."""
-        ix = (-1) * np.ones(m.facets.shape[1], dtype=np.int32)
-        ix[facets == 1] = (np.arange(np.count_nonzero(facets))
-                           + m.p.shape[1])
-        ix = ix[m.t2f]
+        m_facets = m.facets
+        mp = m.p
+        mt = m.t
+        marked = facets == 1
+        nmarked = np.count_nonzero(marked)
 
-        red = (ix[0] >= 0) * (ix[1] >= 0) * (ix[2] >= 0)
-        blue1 = (ix[0] == -1) * (ix[1] >= 0) * (ix[2] >= 0)
-        blue2 = (ix[0] >= 0) * (ix[1] == -1) * (ix[2] >= 0)
-        green = (ix[0] == -1) * (ix[1] == -1) * (ix[2] >= 0)
-        rest = (ix[0] == -1) * (ix[1] == -1) * (ix[2] == -1)
+        ix_facets = np.full(m_facets.shape[1], -1, dtype=np.int32)
+        ix_facets[marked] = np.arange(nmarked, dtype=np.int32) + mp.shape[1]
+        ix = ix_facets[m.t2f]
+        ix0, ix1, ix2 = ix
 
-        # new red elements
-        t_red = np.hstack((
-            np.vstack((m.t[0, red], ix[0, red], ix[2, red])),
-            np.vstack((m.t[1, red], ix[0, red], ix[1, red])),
-            np.vstack((m.t[2, red], ix[1, red], ix[2, red])),
-            np.vstack((ix[1, red], ix[2, red], ix[0, red])),
-        ))
+        has0 = ix0 >= 0
+        has1 = ix1 >= 0
+        has2 = ix2 >= 0
+        no0 = ~has0
+        no1 = ~has1
+        no2 = ~has2
 
-        # new blue elements
-        t_blue1 = np.hstack((
-            np.vstack((m.t[1, blue1], m.t[0, blue1], ix[2, blue1])),
-            np.vstack((m.t[1, blue1], ix[1, blue1], ix[2, blue1])),
-            np.vstack((m.t[2, blue1], ix[2, blue1], ix[1, blue1])),
-        ))
+        red = has0 & has1 & has2
+        blue1 = no0 & has1 & has2
+        blue2 = has0 & no1 & has2
+        green = no0 & no1 & has2
+        rest = no0 & no1 & no2
 
-        t_blue2 = np.hstack((
-            np.vstack((m.t[0, blue2], ix[0, blue2], ix[2, blue2])),
-            np.vstack((ix[2, blue2], ix[0, blue2], m.t[1, blue2])),
-            np.vstack((m.t[2, blue2], ix[2, blue2], m.t[1, blue2])),
-        ))
+        nrest = np.count_nonzero(rest)
+        nred = np.count_nonzero(red)
+        nblue1 = np.count_nonzero(blue1)
+        nblue2 = np.count_nonzero(blue2)
+        ngreen = np.count_nonzero(green)
 
-        # new green elements
-        t_green = np.hstack((
-            np.vstack((m.t[1, green], ix[2, green], m.t[0, green])),
-            np.vstack((m.t[2, green], ix[2, green], m.t[1, green])),
-        ))
+        p = .5 * (mp[:, m_facets[0, marked]] + mp[:, m_facets[1, marked]])
 
-        # new nodes
-        p = .5 * (m.p[:, m.facets[0, facets == 1]] +
-                  m.p[:, m.facets[1, facets == 1]])
+        new_t_cols = nrest + 4 * nred + 3 * nblue1 + 3 * nblue2 + 2 * ngreen
+        t_out = np.empty((3, new_t_cols), dtype=np.result_type(mt.dtype, ix.dtype))
+        offset = 0
+
+        if nrest:
+            end = nrest
+            t_out[:, :end] = mt[:, rest]
+            offset = end
+
+        if nred:
+            mt_r = mt[:, red]
+            ix_r = ix[:, red]
+            end = offset + nred
+            t_out[0, offset:end] = mt_r[0]
+            t_out[1, offset:end] = ix_r[0]
+            t_out[2, offset:end] = ix_r[2]
+            offset = end
+            end = offset + nred
+            t_out[0, offset:end] = mt_r[1]
+            t_out[1, offset:end] = ix_r[0]
+            t_out[2, offset:end] = ix_r[1]
+            offset = end
+            end = offset + nred
+            t_out[0, offset:end] = mt_r[2]
+            t_out[1, offset:end] = ix_r[1]
+            t_out[2, offset:end] = ix_r[2]
+            offset = end
+            end = offset + nred
+            t_out[0, offset:end] = ix_r[1]
+            t_out[1, offset:end] = ix_r[2]
+            t_out[2, offset:end] = ix_r[0]
+            offset = end
+
+        if nblue1:
+            mt_b = mt[:, blue1]
+            ix_b = ix[:, blue1]
+            end = offset + nblue1
+            t_out[0, offset:end] = mt_b[1]
+            t_out[1, offset:end] = mt_b[0]
+            t_out[2, offset:end] = ix_b[2]
+            offset = end
+            end = offset + nblue1
+            t_out[0, offset:end] = mt_b[1]
+            t_out[1, offset:end] = ix_b[1]
+            t_out[2, offset:end] = ix_b[2]
+            offset = end
+            end = offset + nblue1
+            t_out[0, offset:end] = mt_b[2]
+            t_out[1, offset:end] = ix_b[2]
+            t_out[2, offset:end] = ix_b[1]
+            offset = end
+
+        if nblue2:
+            mt_b = mt[:, blue2]
+            ix_b = ix[:, blue2]
+            end = offset + nblue2
+            t_out[0, offset:end] = mt_b[0]
+            t_out[1, offset:end] = ix_b[0]
+            t_out[2, offset:end] = ix_b[2]
+            offset = end
+            end = offset + nblue2
+            t_out[0, offset:end] = ix_b[2]
+            t_out[1, offset:end] = ix_b[0]
+            t_out[2, offset:end] = mt_b[1]
+            offset = end
+            end = offset + nblue2
+            t_out[0, offset:end] = mt_b[2]
+            t_out[1, offset:end] = ix_b[2]
+            t_out[2, offset:end] = mt_b[1]
+            offset = end
+
+        if ngreen:
+            mt_g = mt[:, green]
+            ix_g = ix[:, green]
+            end = offset + ngreen
+            t_out[0, offset:end] = mt_g[1]
+            t_out[1, offset:end] = ix_g[2]
+            t_out[2, offset:end] = mt_g[0]
+            offset = end
+            end = offset + ngreen
+            t_out[0, offset:end] = mt_g[2]
+            t_out[1, offset:end] = ix_g[2]
+            t_out[2, offset:end] = mt_g[1]
 
         if subdomains is not None:
-            new_t = np.zeros((4, m.t.shape[1]), dtype=np.int32) - 1
-            nred = np.sum(red)
-            nblue1 = np.sum(blue1)
-            nblue2 = np.sum(blue2)
-            ngreen = np.sum(green)
-            offset = np.sum(rest)
-            new_t[0, rest] = np.arange(offset, dtype=np.int32)
-            new_t[:, red] = np.arange(offset,
-                                      offset + 4 * nred,
-                                      dtype=np.int32).reshape(4, -1)
-            offset += 4 * nred
-            new_t[:3, blue1] = np.arange(offset,
-                                         offset + 3 * nblue1,
-                                         dtype=np.int32).reshape(3, -1)
-            offset += 3 * nblue1
-            new_t[:3, blue2] = np.arange(offset,
-                                         offset + 3 * nblue2,
-                                         dtype=np.int32).reshape(3, -1)
-            offset += 3 * nblue2
-            new_t[:2, green] = np.arange(offset,
-                                         offset + 2 * ngreen,
-                                         dtype=np.int32).reshape(2, -1)
+            new_t = np.full((4, mt.shape[1]), -1, dtype=np.int32)
+            offset = nrest
+            if nrest:
+                new_t[0, rest] = np.arange(nrest, dtype=np.int32)
+            if nred:
+                new_t[:, red] = np.arange(offset, offset + 4 * nred, dtype=np.int32).reshape(4, -1)
+                offset += 4 * nred
+            if nblue1:
+                new_t[:3, blue1] = np.arange(offset, offset + 3 * nblue1, dtype=np.int32).reshape(3, -1)
+                offset += 3 * nblue1
+            if nblue2:
+                new_t[:3, blue2] = np.arange(offset, offset + 3 * nblue2, dtype=np.int32).reshape(3, -1)
+                offset += 3 * nblue2
+            if ngreen:
+                new_t[:2, green] = np.arange(offset, offset + 2 * ngreen, dtype=np.int32).reshape(2, -1)
             subdomains = {
-                name: np.setdiff1d(np.unique(new_t[:, ixs]), [-1])
+                name: (lambda u: u[u != -1])(np.unique(new_t[:, ixs]))
                 for name, ixs in subdomains.items()
             }
 
         return (
-            np.hstack((m.p, p)),
-            np.hstack((m.t[:, rest], t_red, t_blue1, t_blue2, t_green)),
+            np.hstack((mp, p)),
+            t_out,
             subdomains,
         )
-
     def _adaptive(self, marked):
 
         sorted_mesh = replace(
