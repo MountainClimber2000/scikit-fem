@@ -1,8 +1,6 @@
 import numpy as np
-
 from skfem.mesh import MeshLine, MeshTri
 from skfem.quadrature import get_quadrature
-
 
 def intersect(m1, m2):
     """Create a supermesh between two nonmatching (1D or 2D) meshes.
@@ -32,7 +30,6 @@ def intersect(m1, m2):
         return _intersect2d(p1, t1, p2, t2)
     raise NotImplementedError("The given mesh types not supported.")
 
-
 def _intersect2d(p1, t1, p2, t2):
     """Two-dimensional supermesh using shapely and bruteforce."""
     try:
@@ -41,32 +38,47 @@ def _intersect2d(p1, t1, p2, t2):
         from shapely.ops import triangulate
     except Exception:
         raise Exception("2D supermeshing requires the package 'shapely>=2'.")
-    t = np.empty((3, 0))
-    p = np.empty((2, 0))
+
     polys = [Polygon(p1[:, t1[:, itr]].T) for itr in range(t1.shape[1])]
-    ixmap = {id(polys[itr]): itr for itr in range(t1.shape[1])}
-    s = STRtree(polys)
-    ix1, ix2 = [], []
+    tree = STRtree(polys)
+    geometries = tree.geometries
+    query = tree.query
+    triangulate_ = triangulate
+
+    p_blocks = []
+    ix1 = []
+    ix2 = []
+    append_p = p_blocks.append
+    append_ix1 = ix1.append
+    append_ix2 = ix2.append
+
     for jtr in range(t2.shape[1]):
         poly1 = Polygon(p2[:, t2[:, jtr]].T)
-        result = s.query(Polygon(p2[:, t2[:, jtr]].T))
+        result = query(poly1)
         if len(result) == 0:
             continue
-        for poly2 in s.geometries.take(result):
-            tris = triangulate(poly1.intersection(poly2))
-            for tri in tris:
-                p = np.hstack((p, np.vstack(tri.exterior.xy)[:, :-1]))
-                diff = np.max(t) + 1 if t.shape[1] > 0 else 0
-                t = np.hstack((t, np.array([[0], [1], [2]]) + diff))
-                ix1.append(ixmap[id(poly2)])
-                ix2.append(jtr)
+        for itr in result:
+            intersection = poly1.intersection(geometries[itr])
+            if intersection.is_empty:
+                continue
+            for tri in triangulate_(intersection):
+                append_p(np.asarray(tri.exterior.xy)[:, :-1])
+                append_ix1(itr)
+                append_ix2(jtr)
+
+    ntris = len(p_blocks)
+    if ntris:
+        p = np.hstack(p_blocks)
+        t = np.arange(3 * ntris, dtype=np.float64).reshape(ntris, 3).T
+    else:
+        p = np.empty((2, 0))
+        t = np.empty((3, 0))
+
     return (
         MeshTri(p, t),
         np.array(ix1, dtype=np.int32),
         np.array(ix2, dtype=np.int32),
     )
-
-
 def _intersect1d(p1, t1, p2, t2):
     """One-dimensional supermesh."""
     # Find unique supermesh facets by combining nodes from both
@@ -90,7 +102,6 @@ def _intersect1d(p1, t1, p2, t2):
     ix2 = MeshLine(p2, t2).element_finder()(mps[0, :, 0])
 
     return MeshLine(p, t), ix1, ix2
-
 
 def elementwise_quadrature(mesh, supermesh=None, tind=None, intorder=None):
     """For creating element-by-element quadrature rules.
