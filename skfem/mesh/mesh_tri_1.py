@@ -1,18 +1,13 @@
 from dataclasses import dataclass, replace, field
 from typing import Type
-
 import numpy as np
 from numpy import ndarray
-
 from ..element import Element, ElementTriP1
 from .mesh_2d import Mesh2D
 from .mesh_simplex import MeshSimplex
-
-
 @dataclass(repr=False)
 class MeshTri1(MeshSimplex, Mesh2D):
     """A standard first-order triangular mesh."""
-
     doflocs: ndarray = field(
         default_factory=lambda: np.array(
             [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64
@@ -26,8 +21,8 @@ class MeshTri1(MeshSimplex, Mesh2D):
     elem: Type[Element] = ElementTriP1
     affine: bool = True
     sort_t: bool = True
-
     @classmethod
+
     def init_tensor(cls: Type, x: ndarray, y: ndarray):
         r"""Initialize a tensor product mesh.
 
@@ -81,9 +76,7 @@ class MeshTri1(MeshSimplex, Mesh2D):
     @classmethod
     def init_symmetric(cls: Type) -> Mesh2D:
         r"""Initialize a symmetric mesh of the unit square.
-
         The mesh topology is as follows::
-
             *------------*
             |\          /|
             |  \      /  |
@@ -93,7 +86,6 @@ class MeshTri1(MeshSimplex, Mesh2D):
             |  /      \  |
             |/          \|
             O------------*
-
         """
         p = np.array([[0., 1., 1., 0., .5],
                       [0., 0., 1., 1., .5]], dtype=np.float64)
@@ -102,13 +94,10 @@ class MeshTri1(MeshSimplex, Mesh2D):
                       [2, 3, 4],
                       [0, 3, 4]], dtype=np.int32).T
         return cls(p, t)
-
     @classmethod
     def init_sqsymmetric(cls: Type) -> Mesh2D:
         r"""Initialize a symmetric mesh of the unit square.
-
         The mesh topology is as follows::
-
             *------*------*
             |\     |     /|
             |  \   |   /  |
@@ -118,7 +107,6 @@ class MeshTri1(MeshSimplex, Mesh2D):
             |  /   |   \  |
             |/     |     \|
             O------*------*
-
         """
         p = np.array([[0., .5, 1., 0., .5, 1., 0., .5, 1.],
                       [0., 0., 0., .5, .5, .5, 1., 1., 1.]], dtype=np.float64)
@@ -131,13 +119,10 @@ class MeshTri1(MeshSimplex, Mesh2D):
                       [4, 7, 8],
                       [4, 5, 8]], dtype=np.int32).T
         return cls(p, t)
-
     @classmethod
     def init_lshaped(cls: Type) -> Mesh2D:
         r"""Initialize a mesh for the L-shaped domain.
-
         The mesh topology is as follows::
-
             *-------*
             | \     |
             |   \   |
@@ -147,7 +132,6 @@ class MeshTri1(MeshSimplex, Mesh2D):
             |   /   |   \   |
             | /     |     \ |
             *---------------*
-
         """
         p = np.array([[0., 1., 0., -1.,  0., -1., -1.,  1.],
                       [0., 0., 1.,  0., -1., -1.,  1., -1.]], dtype=np.float64)
@@ -158,16 +142,13 @@ class MeshTri1(MeshSimplex, Mesh2D):
                       [0, 4, 5],
                       [0, 3, 5]], dtype=np.int32).T
         return cls(p, t)
-
     @classmethod
     def init_circle(cls: Type,
                     nrefs: int = 3,
                     smoothed: bool = False) -> Mesh2D:
         r"""Initialize a circle mesh.
-
         Works by repeatedly refining the following mesh and moving
         new nodes to the boundary::
-
                    *
                  / | \
                /   |   \
@@ -177,14 +158,12 @@ class MeshTri1(MeshSimplex, Mesh2D):
                \   |   /
                  \ | /
                    *
-
         Parameters
         ----------
         nrefs
             Number of refinements, by default 3.
         smoothed
             If ``True``, apply smoothing after each refine.
-
         """
         p = np.array([[0., 0.],
                       [1., 0.],
@@ -254,26 +233,98 @@ class MeshTri1(MeshSimplex, Mesh2D):
     @staticmethod
     def _adaptive_sort_mesh(p, t):
         """Make (0, 2) the longest edge in t."""
-        l01 = np.sqrt(np.sum((p[:, t[0]] - p[:, t[1]]) ** 2, axis=0))
-        l12 = np.sqrt(np.sum((p[:, t[1]] - p[:, t[2]]) ** 2, axis=0))
-        l02 = np.sqrt(np.sum((p[:, t[0]] - p[:, t[2]]) ** 2, axis=0))
+        t0 = t[0]
+        t1 = t[1]
+        t2 = t[2]
+        dim = p.shape[0]
 
-        ix01 = (l01 > l02) * (l01 > l12)
-        ix12 = (l12 > l01) * (l12 > l02)
+        if dim == 2:
+            x = p[0]
+            y = p[1]
 
-        # row swaps
-        t = t.copy()
+            x1 = x[t1]
+            dx01 = x[t0] - x1
+            dx12 = x1 - x[t2]
 
-        tmp = t[2, ix01]
-        t[2, ix01] = t[1, ix01]
-        t[1, ix01] = tmp
+            y1 = y[t1]
+            dy01 = y[t0] - y1
+            dy12 = y1 - y[t2]
 
-        tmp = t[0, ix12]
-        t[0, ix12] = t[1, ix12]
-        t[1, ix12] = tmp
+            l01 = dx01 * dx01
+            l01 += dy01 * dy01
 
-        return t
+            dx01 += dx12
+            dy01 += dy12
+            dx01 *= dx01
+            dx01 += dy01 * dy01
+            l02 = dx01
 
+            dx12 *= dx12
+            dx12 += dy12 * dy12
+            l12 = dx12
+
+        elif dim == 3:
+            x = p[0]
+            y = p[1]
+            z = p[2]
+
+            x1 = x[t1]
+            dx01 = x[t0] - x1
+            dx12 = x1 - x[t2]
+
+            y1 = y[t1]
+            dy01 = y[t0] - y1
+            dy12 = y1 - y[t2]
+
+            z1 = z[t1]
+            dz01 = z[t0] - z1
+            dz12 = z1 - z[t2]
+
+            l01 = dx01 * dx01
+            l01 += dy01 * dy01
+            l01 += dz01 * dz01
+
+            dx01 += dx12
+            dy01 += dy12
+            dz01 += dz12
+            dx01 *= dx01
+            dx01 += dy01 * dy01
+            dx01 += dz01 * dz01
+            l02 = dx01
+
+            dx12 *= dx12
+            dx12 += dy12 * dy12
+            dx12 += dz12 * dz12
+            l12 = dx12
+
+        else:
+            p1 = p[:, t1]
+            d01 = p[:, t0] - p1
+            d12 = p1 - p[:, t2]
+            l01 = np.einsum("ij,ij->j", d01, d01)
+            d01 += d12
+            l02 = np.einsum("ij,ij->j", d01, d01)
+            l12 = np.einsum("ij,ij->j", d12, d12)
+
+        ix01 = l01 > l02
+        ix01 &= l01 > l12
+        ix12 = l12 > l01
+        ix12 &= l12 > l02
+
+        out = t.copy()
+        r0 = out[0]
+        r1 = out[1]
+        r2 = out[2]
+
+        tmp = r2[ix01]
+        r2[ix01] = r1[ix01]
+        r1[ix01] = tmp
+
+        tmp = r0[ix12]
+        r0[ix12] = r1[ix12]
+        r1[ix12] = tmp
+
+        return out
     @staticmethod
     def _adaptive_find_facets(m, marked_elems):
         """Find the facets to split."""
