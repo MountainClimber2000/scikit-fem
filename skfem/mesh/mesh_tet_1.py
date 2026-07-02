@@ -1,18 +1,13 @@
 from dataclasses import dataclass, replace, field
 from typing import Type
-
 import numpy as np
 from numpy import ndarray
-
 from ..element import Element, ElementTetP1
 from .mesh_3d import Mesh3D
 from .mesh_simplex import MeshSimplex
-
-
 @dataclass(repr=False)
 class MeshTet1(MeshSimplex, Mesh3D):
     """A standard first-order tetrahedral mesh."""
-
     doflocs: ndarray = field(
         default_factory=lambda: np.array(
             [
@@ -237,99 +232,219 @@ class MeshTet1(MeshSimplex, Mesh3D):
     def _adaptive(self, marked):
         """Longest edge bisection."""
         if isinstance(marked, list):
-            marked = np.array(marked, dtype=np.int32)
+            marked = np.asarray(marked, dtype=np.int32)
         marked = np.unique(marked)
+
         nt = self.t.shape[1]
         nv = self.p.shape[1]
-        p = np.zeros((3, 9 * nv), dtype=np.float64)
-        t = np.zeros((4, 8 * nt), dtype=np.int32)
-        p[:, :nv] = self.p.copy()
-        t[:, :nt] = self.t.copy()
+        p_cap = 9 * nv
+        t_cap = 8 * nt
 
-        nonconf = np.ones(8 * nv, dtype=np.int8)
-        split_edge = np.zeros((3, 8 * nv), dtype=np.int32)
+        p = np.empty((3, p_cap), dtype=np.float64)
+        t = np.zeros((4, t_cap), dtype=np.int32)
+        p[:, :nv] = self.p
+        t[:, :nt] = self.t
+
+        edge_cap = 8 * nv
+        sorted_key = np.empty(edge_cap, dtype=np.int64)
+        sorted_node = np.empty(edge_cap, dtype=np.int32)
+        merge_key = np.empty(edge_cap, dtype=np.int64)
+        merge_node = np.empty(edge_cap, dtype=np.int32)
+        merge_mask = np.empty(edge_cap, dtype=bool)
+
+        edge_work = np.empty(6 * t_cap, dtype=np.int64)
+        key_tmp = np.empty(t_cap, dtype=np.int64)
+        mark_work = np.empty(t_cap, dtype=bool)
+        changed_work = np.empty(t_cap, dtype=np.int32)
+        node_work = np.zeros(p_cap, dtype=bool)
+
+        key_base = np.int64(p_cap)
         ns = 0
 
-        while len(marked) > 0:
-            nm = len(marked)
-            tnew = np.zeros(nm, dtype=np.int32) - 1
+        def make_key(a, b, out, tmp):
+            np.minimum(a, b, out=out, casting="unsafe")
+            out *= key_base
+            np.maximum(a, b, out=tmp, casting="unsafe")
+            out += tmp
+
+        def element_keys(tt, m):
+            ek = edge_work[:6 * m].reshape(6, m)
+            tmp = key_tmp[:m]
+            make_key(tt[0], tt[1], ek[0], tmp)
+            make_key(tt[0], tt[2], ek[1], tmp)
+            make_key(tt[0], tt[3], ek[2], tmp)
+            make_key(tt[1], tt[2], ek[3], tmp)
+            make_key(tt[1], tt[3], ek[4], tmp)
+            make_key(tt[2], tt[3], ek[5], tmp)
+            return edge_work[:6 * m]
+
+        while marked.size > 0:
+            nm = marked.size
+            old_nt = nt
+            end = nt + nm
+
+            tnew = np.empty(nm, dtype=np.int32)
             t = self._adaptive_sort_mesh(p, t, marked)
             t0, t1, t2, t3 = t[:, marked]
 
-            if ns == 0:
-                ix = np.arange(nm, dtype=np.int32)
+            edge_key = edge_work[:nm]
+            make_key(t0, t1, edge_key, key_tmp[:nm])
+
+            if ns:
+                sk = sorted_key[:ns]
+                pos = np.searchsorted(sk, edge_key)
+                found = pos < ns
+                fidx = np.flatnonzero(found)
+                if fidx.size:
+                    same = sk[pos[fidx]] == edge_key[fidx]
+                    found[fidx] = same
+                    ridx = fidx[same]
+                    if ridx.size:
+                        tnew[ridx] = sorted_node[pos[ridx]]
+                ix = np.flatnonzero(~found).astype(np.int32)
             else:
-                nonconf_edge = np.nonzero(nonconf[:ns])[0].astype(np.int32)
-                i, j = self._find_nz(
-                    np.hstack((split_edge[0, nonconf_edge],
-                               split_edge[1, nonconf_edge])),
-                    np.hstack((split_edge[2, nonconf_edge],) * 2),
-                    (nv, nv),
-                    lambda I: I[t0].multiply(I[t1])
-                )
-                tnew[i] = j
-                ix = np.nonzero(tnew == -1)[0].astype(np.int32)
+                ix = np.arange(nm, dtype=np.int32)
 
-            if len(ix) > 0:
-                i, j = self._find_nz(
-                    *np.sort(np.vstack((t0[ix], t1[ix])), axis=0),
-                    (nv, nv),
-                )
-                nn = len(i)
-                nix = slice(ns, ns + nn)
+            nn = 0
+            if ix.size:
+                new_keys, inv = np.unique(edge_key[ix], return_inverse=True)
+                nn = new_keys.size
 
-                split_edge[0, nix] = i
-                split_edge[1, nix] = j
-                split_edge[2, nix] = np.arange(nv, nv + nn, dtype=np.int32)
+                i = (new_keys // key_base).astype(np.int32)
+                j = (new_keys % key_base).astype(np.int32)
+                new_nodes = np.arange(nv, nv + nn, dtype=np.int32)
 
-                # add new points
-                p[:, nv:(nv + nn)] = .5 * (p[:, i] + p[:, j])
+                pnew = p[:, nv:nv + nn]
+                pnew[:] = p[:, i]
+                pnew += p[:, j]
+                pnew *= 0.5
+
+                tnew[ix] = new_nodes[inv]
+
+                if ns == 0:
+                    sorted_key[:nn] = new_keys
+                    sorted_node[:nn] = new_nodes
+                else:
+                    total = ns + nn
+                    ins = np.searchsorted(sorted_key[:ns], new_keys) + np.arange(nn)
+                    mm = merge_mask[:total]
+                    mm.fill(False)
+                    mm[ins] = True
+
+                    mk = merge_key[:total]
+                    mn = merge_node[:total]
+                    mk[mm] = new_keys
+                    mn[mm] = new_nodes
+                    mk[~mm] = sorted_key[:ns]
+                    mn[~mm] = sorted_node[:ns]
+                    sorted_key[:total] = mk
+                    sorted_node[:total] = mn
 
                 nv += nn
-                assert len(np.unique(p[:, :nv].T, axis=0)) == nv
-                i, j = self._find_nz(
-                    split_edge[:2, nix],
-                    np.vstack((split_edge[2, nix],) * 2),
-                    (nv, nv),
-                    lambda I: I[t0].multiply(I[t1])
-                )
-                tnew[i] = j
                 ns += nn
 
-            # add new elements
-            t[:, marked] = np.vstack((t3, t0, t2, tnew))
-            t[:, nt:(nt + nm)] = np.vstack((t2, t1, t3, tnew))
-            nt += nm
+            t[0, marked] = t3
+            t[1, marked] = t0
+            t[2, marked] = t2
+            t[3, marked] = tnew
 
-            check = np.nonzero(nonconf[:ns])[0].astype(np.int32)
-            check_node = np.zeros(nv, dtype=np.int32)
-            check_node[split_edge[:2, check]] = 1
-            check_elem = (np.nonzero(check_node[t[:, :nt]].sum(axis=0))[0]
-                          .astype(np.int32))
+            t[0, old_nt:end] = t2
+            t[1, old_nt:end] = t1
+            t[2, old_nt:end] = t3
+            t[3, old_nt:end] = tnew
+            nt = end
 
-            i, j = self._find_nz(
-                t[:, check_elem],
-                np.vstack((check_elem,) * 4),
-                (nv, nt),
-                lambda I: (I[split_edge[0, check]]
-                           .multiply(I[split_edge[1, check]]))
-            )
-            nonconf[check[i]] = 1
-            marked = np.unique(j)
+            mark_mask = mark_work[:nt]
+            mark_mask.fill(False)
+
+            if nn:
+                if nn == 1:
+                    a = i[0]
+                    b = j[0]
+                    tt = t[:, :nt]
+                    has_a = (tt[0] == a) | (tt[1] == a) | (tt[2] == a) | (tt[3] == a)
+                    has_b = (tt[0] == b) | (tt[1] == b) | (tt[2] == b) | (tt[3] == b)
+                    mark_mask[:] = has_a & has_b
+                elif (nn << 3) < nt:
+                    nw = node_work
+                    nw[i] = True
+                    nw[j] = True
+                    cand = np.flatnonzero(nw[t[0, :nt]] | nw[t[1, :nt]] | nw[t[2, :nt]] | nw[t[3, :nt]]).astype(np.int32)
+                    nw[i] = False
+                    nw[j] = False
+                    nc = cand.size
+                    if nc:
+                        if nc < nt:
+                            flat = element_keys(t[:, cand], nc)
+                            pos = np.searchsorted(new_keys, flat)
+                            valid = np.flatnonzero(pos < nn)
+                            if valid.size:
+                                hit = valid[new_keys[pos[valid]] == flat[valid]]
+                                if hit.size:
+                                    mark_mask[cand[hit % nc]] = True
+                        else:
+                            flat = element_keys(t[:, :nt], nt)
+                            pos = np.searchsorted(new_keys, flat)
+                            valid = np.flatnonzero(pos < nn)
+                            if valid.size:
+                                hit = valid[new_keys[pos[valid]] == flat[valid]]
+                                if hit.size:
+                                    mark_mask[hit % nt] = True
+                else:
+                    flat = element_keys(t[:, :nt], nt)
+                    pos = np.searchsorted(new_keys, flat)
+                    valid = np.flatnonzero(pos < nn)
+                    if valid.size:
+                        hit = valid[new_keys[pos[valid]] == flat[valid]]
+                        if hit.size:
+                            mark_mask[hit % nt] = True
+
+            mchg = 2 * nm
+            changed = changed_work[:mchg]
+            changed[:nm] = marked
+            changed[nm:mchg] = np.arange(old_nt, end, dtype=np.int32)
+
+            if ns == 1:
+                key = sorted_key[0]
+                a = np.int32(key // key_base)
+                b = np.int32(key % key_base)
+                c0 = t[0, changed]
+                c1 = t[1, changed]
+                c2 = t[2, changed]
+                c3 = t[3, changed]
+                has_a = (c0 == a) | (c1 == a) | (c2 == a) | (c3 == a)
+                has_b = (c0 == b) | (c1 == b) | (c2 == b) | (c3 == b)
+                hit = has_a & has_b
+                if hit.any():
+                    mark_mask[changed[hit]] = True
+            else:
+                already = mark_mask[changed]
+                if already.any():
+                    changed = changed[~already]
+                    mchg = changed.size
+                if mchg:
+                    flat = element_keys(t[:, changed], mchg)
+                    sk = sorted_key[:ns]
+                    pos = np.searchsorted(sk, flat)
+                    valid = np.flatnonzero(pos < ns)
+                    if valid.size:
+                        hit = valid[sk[pos[valid]] == flat[valid]]
+                        if hit.size:
+                            mark_mask[changed[hit % mchg]] = True
+
+            marked = np.flatnonzero(mark_mask).astype(np.int32)
 
         return replace(
             self,
             doflocs=p[:, :nv],
             t=t[:, :nt],
         )
-
     @classmethod
     def init_tensor(cls: Type,
                     x: ndarray,
                     y: ndarray,
                     z: ndarray):
         """Initialize a tensor product mesh.
-
         Parameters
         ----------
         x
@@ -338,7 +453,6 @@ class MeshTet1(MeshSimplex, Mesh3D):
             The nodal coordinates in dimension `y`.
         z
             The nodal coordinates in dimension `z`.
-
         """
         npx = len(x)
         npy = len(y)
@@ -381,7 +495,6 @@ class MeshTet1(MeshSimplex, Mesh3D):
                 .reshape(ne, 1, order='F')
                 .copy()
                 .flatten())
-
         T = np.zeros((4, 6 * ne))
         T[:, :ne] = t[[0, 1, 5, 7]]
         T[:, ne:(2 * ne)] = t[[0, 1, 4, 7]]
@@ -389,19 +502,15 @@ class MeshTet1(MeshSimplex, Mesh3D):
         T[:, (3 * ne):(4 * ne)] = t[[0, 3, 5, 7]]
         T[:, (4 * ne):(5 * ne)] = t[[0, 2, 6, 7]]
         T[:, (5 * ne):] = t[[0, 3, 6, 7]]
-
         return cls(p, T.astype(np.int32))
-
     @classmethod
     def init_ball(cls: Type,
                   nrefs: int = 3):
         """Initialize a ball mesh.
-
         Parameters
         ----------
         nrefs
             Number of refinements, by default 3.
-
         """
         p = np.array([[0., 0., 0.],
                       [1., 0., 0.],
