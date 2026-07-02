@@ -1,18 +1,13 @@
 from dataclasses import dataclass, replace, field
 from typing import Type
-
 import numpy as np
 from numpy import ndarray
-
 from ..element import Element, ElementTetP1
 from .mesh_3d import Mesh3D
 from .mesh_simplex import MeshSimplex
-
-
 @dataclass(repr=False)
 class MeshTet1(MeshSimplex, Mesh3D):
     """A standard first-order tetrahedral mesh."""
-
     doflocs: ndarray = field(
         default_factory=lambda: np.array(
             [
@@ -166,61 +161,36 @@ class MeshTet1(MeshSimplex, Mesh3D):
         )
 
     def _adaptive_sort_mesh(self, p, t, marked):
-        """Make (0, 1) the longest edge in t for marked."""
+            """Make (0, 1) the longest edge in t for marked."""
 
-        # add noise so that there are no edges with the same length
-        np.random.seed(1337)
-        p = p.copy() + 1e-10 * np.random.random(p.shape)
+            np.random.seed(1337)
+            p = p + 1e-10 * np.random.random(p.shape)
 
-        l01 = np.sqrt(np.sum((p[:, t[0, marked]] - p[:, t[1, marked]]) ** 2,
-                             axis=0))
-        l12 = np.sqrt(np.sum((p[:, t[1, marked]] - p[:, t[2, marked]]) ** 2,
-                             axis=0))
-        l02 = np.sqrt(np.sum((p[:, t[0, marked]] - p[:, t[2, marked]]) ** 2,
-                             axis=0))
-        l03 = np.sqrt(np.sum((p[:, t[0, marked]] - p[:, t[3, marked]]) ** 2,
-                             axis=0))
-        l13 = np.sqrt(np.sum((p[:, t[1, marked]] - p[:, t[3, marked]]) ** 2,
-                             axis=0))
-        l23 = np.sqrt(np.sum((p[:, t[2, marked]] - p[:, t[3, marked]]) ** 2,
-                             axis=0))
+            tm = t[:, marked]
+            T = t.copy()
+            nmarked = tm.shape[1]
+            if nmarked == 0:
+                return T
 
-        # indices where (1, 2) is the longest etc.
-        ix12 = ((l12 > l01)
-                * (l12 > l02)
-                * (l12 > l03)
-                * (l12 > l13)
-                * (l12 > l23))
-        ix02 = ((l02 > l01)
-                * (l02 > l12)
-                * (l02 > l03)
-                * (l02 > l13)
-                * (l02 > l23))
-        ix03 = ((l03 > l01)
-                * (l03 > l12)
-                * (l03 > l02)
-                * (l03 > l13)
-                * (l03 > l23))
-        ix13 = ((l13 > l01)
-                * (l13 > l12)
-                * (l13 > l02)
-                * (l13 > l03)
-                * (l13 > l23))
-        ix23 = ((l23 > l01)
-                * (l23 > l12)
-                * (l23 > l02)
-                * (l23 > l03)
-                * (l23 > l13))
+            pts = p[:, tm]
+            diffs = (pts[:, [0, 1, 0, 0, 1, 2], :] -
+                     pts[:, [1, 2, 2, 3, 3, 3], :])
+            lengths = np.einsum('ijk,ijk->jk', diffs, diffs)
 
-        # flip edges
-        T = t.copy()
-        T[:, marked[ix02]] = t[:, marked[ix02]][[2, 0, 1, 3]]
-        T[:, marked[ix03]] = t[:, marked[ix03]][[0, 3, 1, 2]]
-        T[:, marked[ix12]] = t[:, marked[ix12]][[1, 2, 0, 3]]
-        T[:, marked[ix13]] = t[:, marked[ix13]][[1, 3, 2, 0]]
-        T[:, marked[ix23]] = t[:, marked[ix23]][[3, 2, 1, 0]]
+            cols = np.arange(nmarked)
+            longest = np.argmax(lengths, axis=0)
+            max_lengths = lengths[longest, cols]
+            longest[(lengths == max_lengths).sum(axis=0) != 1] = 0
 
-        return T
+            perms = np.array([[0, 1, 2, 3],
+                              [1, 2, 0, 3],
+                              [2, 0, 1, 3],
+                              [0, 3, 1, 2],
+                              [1, 3, 2, 0],
+                              [3, 2, 1, 0]])
+            T[:, marked] = tm[perms[longest].T, cols]
+
+            return T
 
     def _find_nz(self, rows, cols, shape, transform=None):
         """Find nonzero entries from the incidence matrix after transform."""
@@ -329,7 +299,6 @@ class MeshTet1(MeshSimplex, Mesh3D):
                     y: ndarray,
                     z: ndarray):
         """Initialize a tensor product mesh.
-
         Parameters
         ----------
         x
@@ -338,7 +307,6 @@ class MeshTet1(MeshSimplex, Mesh3D):
             The nodal coordinates in dimension `y`.
         z
             The nodal coordinates in dimension `z`.
-
         """
         npx = len(x)
         npy = len(y)
@@ -381,7 +349,6 @@ class MeshTet1(MeshSimplex, Mesh3D):
                 .reshape(ne, 1, order='F')
                 .copy()
                 .flatten())
-
         T = np.zeros((4, 6 * ne))
         T[:, :ne] = t[[0, 1, 5, 7]]
         T[:, ne:(2 * ne)] = t[[0, 1, 4, 7]]
@@ -389,19 +356,15 @@ class MeshTet1(MeshSimplex, Mesh3D):
         T[:, (3 * ne):(4 * ne)] = t[[0, 3, 5, 7]]
         T[:, (4 * ne):(5 * ne)] = t[[0, 2, 6, 7]]
         T[:, (5 * ne):] = t[[0, 3, 6, 7]]
-
         return cls(p, T.astype(np.int32))
-
     @classmethod
     def init_ball(cls: Type,
                   nrefs: int = 3):
         """Initialize a ball mesh.
-
         Parameters
         ----------
         nrefs
             Number of refinements, by default 3.
-
         """
         p = np.array([[0., 0., 0.],
                       [1., 0., 0.],
@@ -426,3 +389,4 @@ class MeshTet1(MeshSimplex, Mesh3D):
             tmp[:, D] = tmp[:, D] / np.linalg.norm(tmp[:, D], axis=0)
             m = replace(m, doflocs=tmp)
         return m
+
