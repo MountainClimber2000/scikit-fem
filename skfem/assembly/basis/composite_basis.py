@@ -1,9 +1,6 @@
 import numpy as np
-
 from .abstract_basis import AbstractBasis
 from skfem.element import ElementComposite
-
-
 class CompositeBasis(AbstractBasis):
     """A combination of two or more Basis objects."""
 
@@ -102,12 +99,19 @@ class CompositeBasis(AbstractBasis):
         return Nbfun
 
     def split(self, x):
-        return list(zip(
-            np.split(x, np.cumsum([basis.N
-                                   for basis in self.bases])[:-1]),
-            self.bases,
-        ))
-
+            bases = self.bases
+            n = len(bases)
+            if n == 0:
+                return []
+            result = [None] * n
+            start = 0
+            for i in range(n - 1):
+                basis = bases[i]
+                stop = start + basis.N
+                result[i] = (x[start:stop], basis)
+                start = stop
+            result[-1] = (x[start:], bases[-1])
+            return result
     def __repr__(self):
         rep = ""
         rep += "<skfem CompositeBasis object>\n"
